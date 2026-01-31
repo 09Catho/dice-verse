@@ -1,42 +1,29 @@
-import React from 'react';
+import { useDice } from '@/context/DiceContext';
 import { Card } from '@/components/ui/card';
+import { calculateMean, calculateStandardDeviation, calculateMode, calculateFrequencies } from '@/lib/statistics';
 
-interface StatisticsPanelProps {
-  rolls: number[];
-}
+export function StatisticsPanel() {
+  const { history, config } = useDice();
 
-export function StatisticsPanel({ rolls }: StatisticsPanelProps) {
-  if (rolls.length === 0) {
+  if (history.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center">
+      <div className="h-full flex items-center justify-center p-8 text-center">
         <p className="text-gray-400">Roll the dice to see statistics</p>
       </div>
     );
   }
 
-  // Basic statistics
+  // We analyze the TOTAL value of each roll event
+  const rolls = history.map(h => h.total);
+
   const total = rolls.reduce((sum, val) => sum + val, 0);
-  const average = total / rolls.length;
+  const average = calculateMean(rolls);
   const min = Math.min(...rolls);
   const max = Math.max(...rolls);
+  const modes = calculateMode(rolls);
+  const stdDev = calculateStandardDeviation(rolls);
 
-  // Calculate frequencies
-  const frequencies = rolls.reduce((acc, val) => {
-    acc[val] = (acc[val] || 0) + 1;
-    return acc;
-  }, {} as Record<number, number>);
-
-  // Find mode (most common value)
-  const mode = Object.entries(frequencies).reduce((a, b) => 
-    frequencies[parseInt(a[0])] > frequencies[parseInt(b[0])] ? a : b
-  )[0];
-
-  // Calculate variance and standard deviation
-  const variance = rolls.reduce((sum, val) => 
-    sum + Math.pow(val - average, 2), 0) / rolls.length;
-  const stdDev = Math.sqrt(variance);
-
-  // Calculate streak information
+  // Calculate streak
   let currentStreak = 1;
   let longestStreak = 1;
   let currentValue = rolls[0];
@@ -53,46 +40,47 @@ export function StatisticsPanel({ rolls }: StatisticsPanelProps) {
 
   const stats = [
     { label: 'Total Rolls', value: rolls.length },
-    { label: 'Average', value: average.toFixed(2) },
+    { label: 'Average Total', value: average.toFixed(2) },
     { label: 'Minimum', value: min },
     { label: 'Maximum', value: max },
-    { label: 'Most Common', value: `${mode} (${frequencies[parseInt(mode)]} times)` },
-    { label: 'Total Sum', value: total },
-    { label: 'Standard Deviation', value: stdDev.toFixed(2) },
+    { label: 'Mode', value: modes.join(', ') },
+    { label: 'Sum of All Rolls', value: total },
+    { label: 'Std Deviation', value: stdDev.toFixed(2) },
     { label: 'Longest Streak', value: longestStreak },
-    { label: 'Last 5 Rolls', value: rolls.slice(-5).join(', ') }
   ];
 
-  // Calculate percentages for each value
-  const percentages = Object.entries(frequencies).map(([value, count]) => ({
-    value,
-    percentage: ((count / rolls.length) * 100).toFixed(1)
-  }));
+  const frequencies = calculateFrequencies(rolls);
+  const percentages = Object.entries(frequencies)
+    .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+    .map(([value, count]) => ({
+      value,
+      percentage: ((count / rolls.length) * 100).toFixed(1)
+    }));
 
   return (
-    <div className="space-y-6">
-      {/* Main Statistics */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+    <Card className="p-6 bg-gray-800/50 backdrop-blur border-gray-700">
+      <h2 className="text-xl font-semibold mb-6">Statistics ({config.count}{config.type})</h2>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {stats.map(({ label, value }) => (
-          <div key={label} className="bg-gray-800/50 p-4 rounded-lg">
-            <p className="text-gray-400 text-sm">{label}</p>
-            <p className="text-xl font-bold text-white">{value}</p>
+          <div key={label} className="bg-gray-900/50 p-4 rounded-lg border border-gray-800">
+            <p className="text-gray-400 text-sm mb-1">{label}</p>
+            <p className="text-xl font-bold text-white truncate" title={String(value)}>{value}</p>
           </div>
         ))}
       </div>
 
-      {/* Distribution Table */}
-      <div className="bg-gray-800/50 p-4 rounded-lg">
-        <h3 className="text-lg font-semibold mb-2">Value Distribution</h3>
-        <div className="grid grid-cols-6 gap-2">
+      <div className="bg-gray-900/50 p-6 rounded-lg border border-gray-800">
+        <h3 className="text-lg font-semibold mb-4">Distribution Table</h3>
+        <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3">
           {percentages.map(({ value, percentage }) => (
-            <div key={value} className="text-center">
-              <div className="text-sm text-gray-400">Value {value}</div>
-              <div className="font-bold">{percentage}%</div>
+            <div key={value} className="text-center p-2 bg-gray-800 rounded">
+              <div className="text-xs text-gray-400">Total {value}</div>
+              <div className="font-bold text-purple-400">{percentage}%</div>
             </div>
           ))}
         </div>
       </div>
-    </div>
+    </Card>
   );
 }

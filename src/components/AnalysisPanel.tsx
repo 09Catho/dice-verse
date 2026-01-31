@@ -1,6 +1,7 @@
-import React from 'react';
+import { useDice } from '@/context/DiceContext';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { calculateFrequencies, getExpectedProbability } from '@/lib/statistics';
 import {
   LineChart,
   Line,
@@ -8,8 +9,6 @@ import {
   Bar,
   AreaChart,
   Area,
-  ScatterChart,
-  Scatter,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -21,42 +20,67 @@ import {
   Cell
 } from 'recharts';
 
-interface AnalysisPanelProps {
-  rolls: number[];
-}
+const COLORS = ['#8B5CF6', '#EC4899', '#10B981', '#F59E0B', '#EF4444', '#6366F1', '#3B82F6', '#A855F7'];
 
-const COLORS = ['#8B5CF6', '#EC4899', '#10B981', '#F59E0B', '#EF4444', '#6366F1'];
+export function AnalysisPanel() {
+  const { history, config } = useDice();
 
-export function AnalysisPanel({ rolls }: AnalysisPanelProps) {
-  if (rolls.length === 0) {
+  if (history.length === 0) {
     return (
-      <div className="h-[300px] flex items-center justify-center">
+      <Card className="bg-gray-800/50 backdrop-blur-sm border-gray-700 p-6 flex items-center justify-center min-h-[400px]">
         <p className="text-gray-400">Roll the dice to see analysis</p>
-      </div>
+      </Card>
     );
   }
 
-  // Prepare data for charts
-  const rollData = rolls.map((value, index) => ({
-    roll: index + 1,
-    value,
-  }));
+  // Use totals for analysis
+  const rolls = history.map(h => h.total);
 
-  // Calculate frequencies
-  const frequencies = rolls.reduce((acc, value) => {
-    acc[value] = (acc[value] || 0) + 1;
-    return acc;
-  }, {} as Record<number, number>);
+  // Frequencies
+  const frequencies = calculateFrequencies(rolls);
+  const distributionData = Object.entries(frequencies)
+    .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+    .map(([value, count]) => ({
+      name: value,
+      value: count,
+      percentage: ((count / rolls.length) * 100).toFixed(1)
+    }));
 
-  const frequencyData = Object.entries(frequencies).map(([value, count]) => ({
-    name: `Value ${value}`,
-    value: count,
-    percentage: ((count / rolls.length) * 100).toFixed(1)
-  }));
+  // Probability Data
+  // We only calculate expected probability for single die rolls easily
+  const showExpected = config.count === 1;
+  const expectedProbs = showExpected ? getExpectedProbability(config.type) : {};
 
-  // Calculate moving average
+  const probabilityData = Object.entries(frequencies)
+    .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+    .map(([value, count]) => {
+      const val = parseInt(value);
+      return {
+        value: val,
+        actual: count / rolls.length,
+        expected: showExpected ? (expectedProbs[val] || 0) : 0
+      };
+    });
+
+  // If showing expected, fill in missing values (e.g. if we rolled 1, 2, 6, we still want 3, 4, 5 on the chart with 0 actual)
+  if (showExpected) {
+     const sides = parseInt(config.type.substring(1));
+     for (let i = 1; i <= sides; i++) {
+         if (!probabilityData.find(d => d.value === i)) {
+             probabilityData.push({
+                 value: i,
+                 actual: 0,
+                 expected: expectedProbs[i] || 0
+             });
+         }
+     }
+     probabilityData.sort((a, b) => a.value - b.value);
+  }
+
+  // Moving Average
   const movingAverageData = rolls.map((value, index) => {
-    const window = rolls.slice(Math.max(0, index - 4), index + 1);
+    const windowSize = 5;
+    const window = rolls.slice(Math.max(0, index - windowSize + 1), index + 1);
     const avg = window.reduce((sum, val) => sum + val, 0) / window.length;
     return {
       roll: index + 1,
@@ -65,60 +89,57 @@ export function AnalysisPanel({ rolls }: AnalysisPanelProps) {
     };
   });
 
-  // Calculate probability distribution
-  const probabilityData = Object.entries(frequencies).map(([value, count]) => ({
-    value: parseInt(value),
-    actual: count / rolls.length,
-    expected: 1 / 6, // For a fair six-sided die
-  }));
-
   return (
     <Card className="bg-gray-800/50 backdrop-blur-sm border-gray-700 p-6">
-      <h2 className="text-xl font-semibold mb-4">Analysis</h2>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-semibold">Analysis</h2>
+        <div className="text-sm text-gray-400">
+           {config.count > 1 ? `Analyzing Sum of ${config.count}${config.type}` : `Analyzing ${config.type}`}
+        </div>
+      </div>
+
       <Tabs defaultValue="timeline" className="w-full space-y-4">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-4 bg-gray-900">
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
           <TabsTrigger value="distribution">Distribution</TabsTrigger>
           <TabsTrigger value="probability">Probability</TabsTrigger>
-          <TabsTrigger value="average">Moving Avg</TabsTrigger>
           <TabsTrigger value="pie">Pie Chart</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="timeline" className="h-[300px]">
+        <TabsContent value="timeline" className="h-[350px] mt-4">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={rollData}>
+            <AreaChart data={movingAverageData}>
+              <defs>
+                <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="roll" label={{ value: 'Roll Number', position: 'bottom' }} stroke="#9CA3AF" />
-              <YAxis label={{ value: 'Value', angle: -90, position: 'left' }} stroke="#9CA3AF" />
+              <XAxis dataKey="roll" stroke="#9CA3AF" tick={{fontSize: 12}} label={{ value: 'Roll #', position: 'bottom', fill: '#6B7280' }} />
+              <YAxis stroke="#9CA3AF" tick={{fontSize: 12}} />
               <Tooltip 
-                contentStyle={{
-                  backgroundColor: '#1F2937',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  color: '#F9FAFB',
-                }}
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '0.5rem', color: '#F9FAFB' }}
               />
-              <Line type="monotone" dataKey="value" stroke="#8B5CF6" strokeWidth={2} dot={false} />
-            </LineChart>
+              <Legend />
+              <Area type="monotone" dataKey="value" stroke="#8B5CF6" fillOpacity={1} fill="url(#colorValue)" name="Value" />
+              <Line type="monotone" dataKey="average" stroke="#10B981" dot={false} strokeWidth={2} name="Mov. Avg (5)" />
+            </AreaChart>
           </ResponsiveContainer>
         </TabsContent>
 
-        <TabsContent value="distribution" className="h-[300px]">
+        <TabsContent value="distribution" className="h-[350px] mt-4">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={frequencyData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="name" stroke="#9CA3AF" />
-              <YAxis label={{ value: 'Frequency', angle: -90, position: 'left' }} stroke="#9CA3AF" />
+            <BarChart data={distributionData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+              <XAxis dataKey="name" stroke="#9CA3AF" tick={{fontSize: 12}} />
+              <YAxis stroke="#9CA3AF" tick={{fontSize: 12}} />
               <Tooltip 
-                contentStyle={{
-                  backgroundColor: '#1F2937',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  color: '#F9FAFB',
-                }}
+                cursor={{fill: '#374151', opacity: 0.2}}
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '0.5rem', color: '#F9FAFB' }}
               />
-              <Bar dataKey="value" fill="#8B5CF6">
-                {frequencyData.map((entry, index) => (
+              <Bar dataKey="value" fill="#8B5CF6" radius={[4, 4, 0, 0]}>
+                {distributionData.map((_entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Bar>
@@ -126,66 +147,44 @@ export function AnalysisPanel({ rolls }: AnalysisPanelProps) {
           </ResponsiveContainer>
         </TabsContent>
 
-        <TabsContent value="probability" className="h-[300px]">
+        <TabsContent value="probability" className="h-[350px] mt-4">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={probabilityData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="value" label={{ value: 'Dice Value', position: 'bottom' }} stroke="#9CA3AF" />
-              <YAxis label={{ value: 'Probability', angle: -90, position: 'left' }} stroke="#9CA3AF" />
+              <XAxis dataKey="value" stroke="#9CA3AF" tick={{fontSize: 12}} />
+              <YAxis tickFormatter={(val) => `${(val * 100).toFixed(0)}%`} stroke="#9CA3AF" tick={{fontSize: 12}} />
               <Tooltip 
-                contentStyle={{
-                  backgroundColor: '#1F2937',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  color: '#F9FAFB',
-                }}
+                formatter={(val: number) => (val * 100).toFixed(1) + '%'}
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '0.5rem', color: '#F9FAFB' }}
               />
               <Legend />
-              <Line type="monotone" dataKey="actual" stroke="#8B5CF6" name="Actual" />
-              <Line type="monotone" dataKey="expected" stroke="#10B981" name="Expected" strokeDasharray="5 5" />
+              <Line type="monotone" dataKey="actual" stroke="#8B5CF6" strokeWidth={3} name="Actual" dot={{r: 4}} />
+              {showExpected && (
+                <Line type="step" dataKey="expected" stroke="#10B981" strokeWidth={2} name="Theoretical" strokeDasharray="5 5" dot={false} />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </TabsContent>
 
-        <TabsContent value="average" className="h-[300px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={movingAverageData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="roll" label={{ value: 'Roll Number', position: 'bottom' }} stroke="#9CA3AF" />
-              <YAxis label={{ value: 'Value', angle: -90, position: 'left' }} stroke="#9CA3AF" />
-              <Tooltip 
-                contentStyle={{
-                  backgroundColor: '#1F2937',
-                  border: 'none',
-                  borderRadius: '0.5rem',
-                  color: '#F9FAFB',
-                }}
-              />
-              <Legend />
-              <Area type="monotone" dataKey="value" stroke="#8B5CF6" fill="#8B5CF6" fillOpacity={0.1} name="Roll Value" />
-              <Area type="monotone" dataKey="average" stroke="#10B981" fill="#10B981" fillOpacity={0.1} name="Moving Average" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </TabsContent>
-
-        <TabsContent value="pie" className="h-[300px]">
+        <TabsContent value="pie" className="h-[350px] mt-4">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
-                data={frequencyData}
+                data={distributionData}
                 cx="50%"
                 cy="50%"
-                labelLine={false}
-                label={({ name, percentage }) => `${name}: ${percentage}%`}
-                outerRadius={80}
-                fill="#8884d8"
+                innerRadius={60}
+                outerRadius={100}
+                paddingAngle={2}
                 dataKey="value"
               >
-                {frequencyData.map((entry, index) => (
+                {distributionData.map((_entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '0.5rem', color: '#F9FAFB' }}
+              />
               <Legend />
             </PieChart>
           </ResponsiveContainer>
